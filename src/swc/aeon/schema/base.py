@@ -4,14 +4,16 @@ import datetime
 import os
 import sys
 from collections.abc import Callable
+from enum import Enum
 from functools import cached_property
 from pathlib import Path
 from typing import Literal, Self, TypeVar
 
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, GetJsonSchemaHandler, TypeAdapter, model_validator
 from pydantic.alias_generators import to_camel, to_pascal
 from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 
 from swc.aeon.io.reader import Reader
 
@@ -33,7 +35,7 @@ def bind_typename(schema: JsonSchemaValue, typename: str) -> JsonSchemaValue:
 
 
 def _inherited_typename(cls: type) -> str | None:
-    """Returns the type name a class carries from the nearest base configuring one."""
+    """Returns the type name configured by the nearest base that declares one."""
     for base in cls.__mro__[1:]:
         config = getattr(base, "model_config", None)
         if isinstance(config, dict):
@@ -51,6 +53,41 @@ class DiscriminatorTypeMixin:
         name = cls.__name__
         cls.__annotations__["discriminator_type"] = Literal[name]
         cls.discriminator_type = name
+
+
+class SchemaEnum(Enum):
+    """An enumeration named in the namespace declared by the module defining it.
+
+    An enumeration cannot carry a `model_config`, so both the type name and the member
+    names are applied while its JSON schema is generated. The type name is computed from
+    the class on each generation rather than stored on it, so an enumeration can never
+    carry the name of another. Pass `sgen_namespace` to describe a type owned elsewhere,
+    which for an enumeration is the only available override.
+    """
+
+    def __init_subclass__(cls, sgen_namespace: str | None = None, **kwargs):
+        """Records the namespace of a type owned elsewhere, when one is given."""
+        cls._sgen_namespace = sgen_namespace
+        super().__init_subclass__(**kwargs)
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        """Names the enumeration and its members for the schema.
+
+        `x-enumNames` supplies member names for an integer enumeration, since its values
+        cannot name a member. The names come from `__members__` rather than from
+        iterating the class, because the values retain aliases and iteration drops them,
+        which would misalign the two lists. A name in the upper case of the Python
+        convention is converted to Pascal case, as field names already are.
+        """
+        schema = handler(core_schema)
+        if schema.get("type") == "integer":
+            schema["x-enumNames"] = [to_pascal(n) if n.isupper() else n for n in cls.__members__]
+        module = sys.modules.get(cls.__module__)
+        namespace = getattr(cls, "_sgen_namespace", None) or getattr(module, "SGEN_NAMESPACE", None)
+        return bind_typename(schema, f"{namespace}.{cls.__name__}") if namespace else schema
 
 
 class BaseSchema(BaseModel):
