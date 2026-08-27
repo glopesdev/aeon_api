@@ -2,6 +2,7 @@
 
 import datetime
 import os
+import sys
 from collections.abc import Callable
 from functools import cached_property
 from pathlib import Path
@@ -14,6 +15,8 @@ from pydantic.json_schema import JsonSchemaValue
 
 from swc.aeon.io.reader import Reader
 
+_TYPENAME_KEY = "x-sgen-typename"
+
 
 def bind_typename(schema: JsonSchemaValue, typename: str) -> JsonSchemaValue:
     """Applies the `x-sgen-typename` tag, binding a definition to an existing type.
@@ -25,8 +28,18 @@ def bind_typename(schema: JsonSchemaValue, typename: str) -> JsonSchemaValue:
     Returns:
         The same schema, so it can be used inline in a `model_config` declaration.
     """
-    schema["x-sgen-typename"] = typename
+    schema[_TYPENAME_KEY] = typename
     return schema
+
+
+def _inherited_typename(cls: type) -> str | None:
+    """Returns the type name a class carries from the nearest base configuring one."""
+    for base in cls.__mro__[1:]:
+        config = getattr(base, "model_config", None)
+        if isinstance(config, dict):
+            extra = config.get("json_schema_extra")
+            return extra.get(_TYPENAME_KEY) if isinstance(extra, dict) else None
+    return None
 
 
 class DiscriminatorTypeMixin:
@@ -53,6 +66,35 @@ class BaseSchema(BaseModel):
 
     _container_prefix: str = ""
     _container: "BaseSchema | None" = None
+
+    def __init_subclass__(cls, sgen_namespace: str | None = None, **kwargs):
+        """Accepts the optional `sgen_namespace` keyword, which `object` would reject."""
+        super().__init_subclass__(**kwargs)
+
+    @classmethod
+    def __pydantic_init_subclass__(cls, sgen_namespace: str | None = None, **kwargs):
+        """Binds the subclass to a type name in the namespace declared by its module.
+
+        The namespace is the `SGEN_NAMESPACE` of the declaring module, or `sgen_namespace`
+        for a model describing a type owned elsewhere. A module declaring neither leaves
+        its models untagged, dropping any name inherited from a base so that a subclass
+        never claims to be the type of its parent. A model generating its schema
+        extension itself is left alone.
+        """
+        super().__pydantic_init_subclass__(**kwargs)
+        extra = cls.model_config.get("json_schema_extra")
+        if callable(extra):
+            return
+
+        module = sys.modules.get(cls.__module__)
+        namespace = sgen_namespace or getattr(module, "SGEN_NAMESPACE", None)
+        extra = dict(extra or {})
+        if namespace is not None:
+            typename = f"{namespace}.{cls.__name__}"
+            cls.model_config["json_schema_extra"] = bind_typename(extra, typename)
+        elif _TYPENAME_KEY in extra and extra[_TYPENAME_KEY] == _inherited_typename(cls):
+            del extra[_TYPENAME_KEY]
+            cls.model_config["json_schema_extra"] = extra
 
     def _join_pattern_prefix(self, pattern_prefix: str) -> str:
         return self._container_prefix
