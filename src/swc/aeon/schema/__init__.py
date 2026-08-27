@@ -4,6 +4,7 @@
 from swc.aeon.schema.base import (
     BaseSchema,
     Dataset,
+    DiscriminatorTypeMixin,
     Experiment,
     Metadata,
     SchemaEnum,
@@ -13,10 +14,11 @@ from swc.aeon.schema.base import (
 
 __all__ = [
     "BaseSchema",
-    "Experiment",
     "Dataset",
+    "DiscriminatorTypeMixin",
+    "Experiment",
     "Metadata",
     "SchemaEnum",
-    "data_reader",
     "bind_typename",
+    "data_reader",
 ]

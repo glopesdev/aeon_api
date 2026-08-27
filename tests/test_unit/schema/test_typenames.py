@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 import pytest
 from pydantic import Field, TypeAdapter
 
-from swc.aeon.schema.base import BaseSchema, DiscriminatorTypeMixin, SchemaEnum, bind_typename
+from swc.aeon.schema import BaseSchema, DiscriminatorTypeMixin, SchemaEnum, bind_typename
 
 NAMESPACE = "Aeon.Test"
 
